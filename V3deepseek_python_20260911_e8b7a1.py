@@ -1,0 +1,1752 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
++------------------------------------------------------------------+
+|   D A R K C H E S S   3 . 0                                      |
+|   Jeu d'échecs Qt/PySide6 - Windows 11                           |
++------------------------------------------------------------------+
+Installation :  pip install PySide6 python-chess
+Lancement :     python darkchess.py
+"""
+
+import sys
+import os
+import json
+import time
+import random
+import datetime
+import webbrowser
+import chess
+import chess.pgn
+
+from PySide6.QtCore import (
+    Qt, QTimer, Signal, QThread, QSize, QRectF, QStandardPaths
+)
+from PySide6.QtGui import (
+    QAction, QActionGroup, QPainter, QColor, QFont, QFontMetrics,
+    QPen, QPainterPath,
+)
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QListWidget, QMessageBox, QInputDialog, QFrame, QFileDialog,
+    QStackedWidget, QPushButton, QDialog, QFormLayout, QSpinBox,
+    QLineEdit, QComboBox, QDialogButtonBox, QProgressBar, QCheckBox,
+    QTextEdit, QSlider, QGridLayout, QSizePolicy
+)
+
+APP_TITLE = "Darkchess"
+APP_VERSION = "3.0"
+LICHESS_URL = "https://lichess.org"
+
+# ===========================================================================
+#  THÈMES
+# ===========================================================================
+
+THEMES = {
+    "clair": {
+        "window_bg": "#f2f3f5", "panel_bg": "#ffffff", "panel_brd": "#d7dbe0",
+        "text": "#1d2129", "muted": "#6b7280", "accent": "#2563eb",
+        "accent_txt": "#ffffff", "sq_light": "#f0d9b5", "sq_dark": "#b58863",
+        "highlight": "rgba(37,99,235,0.45)", "last_move": "rgba(255,200,60,0.55)",
+        "check": "rgba(239,68,68,0.65)", "dot": "rgba(30,41,59,0.30)",
+        "white_pc": "#ffffff", "white_ol": "#2c2c32",
+        "black_pc": "#1e1e24", "black_ol": "#000000",
+        "clock_run": "#2563eb", "clock_idle": "#c3c9d1",
+    },
+    "sombre": {
+        "window_bg": "#111318", "panel_bg": "#1c2028", "panel_brd": "#2d333f",
+        "text": "#e8eaed", "muted": "#8b93a1", "accent": "#3b82f6",
+        "accent_txt": "#ffffff", "sq_light": "#c8d0dc", "sq_dark": "#4a5464",
+        "highlight": "rgba(59,130,246,0.55)", "last_move": "rgba(250,204,21,0.50)",
+        "check": "rgba(239,68,68,0.75)", "dot": "rgba(226,232,240,0.40)",
+        "white_pc": "#ffffff", "white_ol": "#101014",
+        "black_pc": "#0a0a10", "black_ol": "#d8e0e8",
+        "clock_run": "#3b82f6", "clock_idle": "#39414d",
+    },
+    "enfer": {
+        "window_bg": "#0d0202", "panel_bg": "#1a0505", "panel_brd": "#3d0f0f",
+        "text": "#f0d0d0", "muted": "#a87070", "accent": "#dc2626",
+        "accent_txt": "#ffffff", "sq_light": "#d68a8a", "sq_dark": "#5a0f0f",
+        "highlight": "rgba(220,38,38,0.55)", "last_move": "rgba(250,180,50,0.55)",
+        "check": "rgba(255,255,255,0.70)", "dot": "rgba(255,200,200,0.45)",
+        "white_pc": "#fff5f5", "white_ol": "#3a0000",
+        "black_pc": "#160000", "black_ol": "#ff8080",
+        "clock_run": "#dc2626", "clock_idle": "#4a1515",
+    },
+}
+
+# ===========================================================================
+#  CONSTANTES MOTEUR
+# ===========================================================================
+
+MATE = 100000
+
+PIECE_VALUE = {
+    chess.PAWN: 100, chess.KNIGHT: 320, chess.BISHOP: 330,
+    chess.ROOK: 500, chess.QUEEN: 900, chess.KING: 0,
+}
+
+PST = {
+    chess.PAWN: [
+        0, 0, 0, 0, 0, 0, 0, 0,
+        50, 50, 50, 50, 50, 50, 50, 50,
+        10, 10, 20, 30, 30, 20, 10, 10,
+        5, 5, 10, 25, 25, 10, 5, 5,
+        0, 0, 0, 20, 20, 0, 0, 0,
+        5, -5, -10, 0, 0, -10, -5, 5,
+        5, 10, 10, -20, -20, 10, 10, 5,
+        0, 0, 0, 0, 0, 0, 0, 0],
+    chess.KNIGHT: [
+        -50, -40, -30, -30, -30, -30, -40, -50,
+        -40, -20, 0, 0, 0, 0, -20, -40,
+        -30, 0, 10, 15, 15, 10, 0, -30,
+        -30, 5, 15, 20, 20, 15, 5, -30,
+        -30, 0, 15, 20, 20, 15, 0, -30,
+        -30, 5, 10, 15, 15, 10, 5, -30,
+        -40, -20, 0, 5, 5, 0, -20, -40,
+        -50, -40, -30, -30, -30, -30, -40, -50],
+    chess.BISHOP: [
+        -20, -10, -10, -10, -10, -10, -10, -20,
+        -10, 0, 0, 0, 0, 0, 0, -10,
+        -10, 0, 5, 10, 10, 5, 0, -10,
+        -10, 5, 5, 10, 10, 5, 5, -10,
+        -10, 0, 10, 10, 10, 10, 0, -10,
+        -10, 10, 10, 10, 10, 10, 10, -10,
+        -10, 5, 0, 0, 0, 0, 5, -10,
+        -20, -10, -10, -10, -10, -10, -10, -20],
+    chess.ROOK: [
+        0, 0, 0, 0, 0, 0, 0, 0,
+        5, 10, 10, 10, 10, 10, 10, 5,
+        -5, 0, 0, 0, 0, 0, 0, -5,
+        -5, 0, 0, 0, 0, 0, 0, -5,
+        -5, 0, 0, 0, 0, 0, 0, -5,
+        -5, 0, 0, 0, 0, 0, 0, -5,
+        -5, 0, 0, 0, 0, 0, 0, -5,
+        0, 0, 0, 5, 5, 0, 0, 0],
+    chess.QUEEN: [
+        -20, -10, -10, -5, -5, -10, -10, -20,
+        -10, 0, 0, 0, 0, 0, 0, -10,
+        -10, 0, 5, 5, 5, 5, 0, -10,
+        -5, 0, 5, 5, 5, 5, 0, -5,
+        0, 0, 5, 5, 5, 5, 0, -5,
+        -10, 5, 5, 5, 5, 5, 0, -10,
+        -10, 0, 5, 0, 0, 0, 0, -10,
+        -20, -10, -10, -5, -5, -10, -10, -20],
+    chess.KING: [
+        -30, -40, -40, -50, -50, -40, -40, -30,
+        -30, -40, -40, -50, -50, -40, -40, -30,
+        -30, -40, -40, -50, -50, -40, -40, -30,
+        -30, -40, -40, -50, -50, -40, -40, -30,
+        -20, -30, -30, -40, -40, -30, -30, -20,
+        -10, -20, -20, -20, -20, -20, -20, -10,
+        20, 20, 0, 0, 0, 0, 20, 20,
+        20, 30, 10, 0, 0, 10, 30, 20],
+}
+
+
+def _pst(piece_type, color, square):
+    table = PST[piece_type]
+    rank = chess.square_rank(square)
+    file = chess.square_file(square)
+    if color == chess.WHITE:
+        return table[(7 - rank) * 8 + file]
+    return table[rank * 8 + file]
+
+
+AI_MODES = {
+    "aggressive": "Agressif",
+    "defensive":  "Défensif",
+    "balanced":   "Équilibré",
+    "chaotic":    "Chaotique",
+    "tactician":  "Tacticien",
+    "strategist": "Stratège",
+    "polyvalent": "Polyvalent",
+}
+
+
+# ===========================================================================
+#  PROFIL IA (persistance JSON)
+# ===========================================================================
+
+class AIProfile:
+    DEFAULT = {
+        "name": "Aurora",
+        "level": 1,
+        "xp": 0,
+        "ai_mode": "balanced",
+        "memory_enabled": True,
+        "stats": {"wins": 0, "losses": 0, "draws": 0, "games": 0},
+        "characteristics": {
+            "aggression": 50,
+            "defense": 50,
+            "tactics": 50,
+            "position": 50,
+            "adaptability": 50,
+        },
+        "memory": {
+            "openings": {},
+            "notes": [],
+        },
+    }
+
+    @staticmethod
+    def path():
+        base = QStandardPaths.writableLocation(
+            QStandardPaths.AppDataLocation) or os.path.expanduser("~/.darkchess")
+        os.makedirs(base, exist_ok=True)
+        return os.path.join(base, "profile.json")
+
+    @classmethod
+    def load(cls):
+        p = cls.path()
+        if os.path.exists(p):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                merged = json.loads(json.dumps(cls.DEFAULT))
+                merged.update(data)
+                merged["stats"].update(data.get("stats", {}))
+                merged["characteristics"].update(data.get("characteristics", {}))
+                merged["memory"].update(data.get("memory", {}))
+                return merged
+            except (OSError, ValueError):
+                pass
+        return json.loads(json.dumps(cls.DEFAULT))
+
+    @classmethod
+    def save(cls, profile):
+        try:
+            with open(cls.path(), "w", encoding="utf-8") as f:
+                json.dump(profile, f, indent=2, ensure_ascii=False)
+        except OSError:
+            pass
+
+    @classmethod
+    def update_after_game(cls, profile, result, moves_uci, ai_color):
+        if not profile.get("memory_enabled", True):
+            return profile
+        stats = profile["stats"]
+        stats["games"] += 1
+
+        ai_won = ((result == "1-0" and ai_color == chess.WHITE) or
+                  (result == "0-1" and ai_color == chess.BLACK))
+        if result == "1/2-1/2":
+            stats["draws"] += 1
+            xp = 5
+        elif ai_won:
+            stats["wins"] += 1
+            xp = 20
+        else:
+            stats["losses"] += 1
+            xp = 3
+
+        profile["xp"] = profile.get("xp", 0) + xp
+        profile["level"] = 1 + profile["xp"] // 100
+
+        if len(moves_uci) >= 4:
+            key = " ".join(moves_uci[:4])
+            openings = profile["memory"].setdefault("openings", {})
+            entry = openings.setdefault(key, {"w": 0, "l": 0, "d": 0})
+            if result == "1/2-1/2":
+                entry["d"] += 1
+            elif ai_won:
+                entry["w"] += 1
+            else:
+                entry["l"] += 1
+
+        char = profile["characteristics"]
+        if ai_won:
+            char["tactics"] = min(100, char["tactics"] + 1)
+            char["aggression"] = min(100, char["aggression"] + 1)
+        else:
+            char["defense"] = min(100, char["defense"] + 1)
+            char["position"] = min(100, char["position"] + 1)
+        char["adaptability"] = min(100, char["adaptability"] + 1)
+
+        cls.save(profile)
+        return profile
+
+
+# ===========================================================================
+#  MOTEUR
+# ===========================================================================
+
+class SearchTimeout(Exception):
+    pass
+
+
+class Engine:
+    """Alpha-bêta + quiescence, 7 modes, profil IA intégré."""
+
+    def __init__(self, mode="balanced", profile=None):
+        self.mode = mode if mode in AI_MODES else "balanced"
+        self.profile = profile or {}
+        self.nodes = 0
+
+    # -------------------------------------------------- évaluation
+    def evaluate(self, board):
+        material = 0
+        positional = 0
+        enemy_king_sq = board.king(not board.turn)
+
+        for sq, pc in board.piece_map().items():
+            sign = 1 if pc.color == chess.WHITE else -1
+            material += sign * PIECE_VALUE[pc.piece_type]
+            positional += sign * _pst(pc.piece_type, pc.color, sq)
+
+        base = material + positional
+        mode = self.mode
+
+        if mode == "aggressive":
+            base += self._attack_score(board, enemy_king_sq) * 4
+        elif mode == "defensive":
+            base += self._safety_score(board) * 3
+        elif mode == "chaotic":
+            base += self._attack_score(board, enemy_king_sq) * 4
+            base += random.randint(-30, 30)
+        elif mode == "tactician":
+            base += self._tactical_score(board) * 5
+        elif mode == "strategist":
+            base += self._positional_score(board) * 4
+        elif mode == "polyvalent":
+            nature = self._position_nature(board)
+            if nature == "tactical":
+                base += self._tactical_score(board) * 4
+            else:
+                base += self._positional_score(board) * 4
+
+        return base if board.turn == chess.WHITE else -base
+
+    def _attack_score(self, board, enemy_king_sq):
+        if enemy_king_sq is None:
+            return 0
+        score = 0
+        for sq in chess.SQUARES:
+            pc = board.piece_at(sq)
+            if pc is None or pc.color != board.turn or pc.piece_type == chess.KING:
+                continue
+            dist = chess.square_distance(sq, enemy_king_sq)
+            if dist <= 4:
+                score += (5 - dist) * 3
+        return score
+
+    def _safety_score(self, board):
+        score = 0
+        for sq, pc in board.piece_map().items():
+            if pc.color != board.turn or pc.piece_type == chess.KING:
+                continue
+            attackers = board.attackers(not board.turn, sq)
+            defenders = board.attackers(board.turn, sq)
+            if attackers and not defenders:
+                score -= PIECE_VALUE[pc.piece_type] // 3
+            elif defenders:
+                score += 5
+        return score
+
+    def _tactical_score(self, board):
+        """Détecte menaces directes : pièces adverses en prise, échecs possibles."""
+        score = 0
+        for sq, pc in board.piece_map().items():
+            if pc.color == board.turn:
+                continue
+            attackers = board.attackers(board.turn, sq)
+            defenders = board.attackers(not board.turn, sq)
+            if attackers and not defenders:
+                score += PIECE_VALUE[pc.piece_type] // 4
+            elif attackers and defenders:
+                score += PIECE_VALUE[pc.piece_type] // 12
+        if board.is_check():
+            score += 30
+        return score
+
+    def _positional_score(self, board):
+        """Développement, contrôle du centre, sécurité du roi."""
+        score = 0
+        center = [chess.D4, chess.E4, chess.D5, chess.E5]
+        ext_center = [chess.C3, chess.C4, chess.C5, chess.C6,
+                      chess.D3, chess.D6, chess.E3, chess.E6,
+                      chess.F3, chess.F4, chess.F5, chess.F6]
+        for sq in center:
+            if board.is_attacked_by(board.turn, sq):
+                score += 10
+        for sq in ext_center:
+            if board.is_attacked_by(board.turn, sq):
+                score += 4
+
+        for sq, pc in board.piece_map().items():
+            if pc.color != board.turn:
+                continue
+            if pc.piece_type in (chess.KNIGHT, chess.BISHOP):
+                rank = chess.square_rank(sq)
+                if (board.turn == chess.WHITE and rank > 0) or \
+                   (board.turn == chess.BLACK and rank < 7):
+                    score += 5
+            elif pc.piece_type == chess.KING:
+                # sécurité du roi : ne pas sortir au milieu
+                if board.turn == chess.WHITE and chess.square_rank(sq) <= 1:
+                    score += 10
+                elif board.turn == chess.BLACK and chess.square_rank(sq) >= 6:
+                    score += 10
+
+        return score
+
+    def _position_nature(self, board):
+        """Détermine si la position est tactique ou positionnelle."""
+        contacts = 0
+        for sq, pc in board.piece_map().items():
+            if board.attackers(not pc.color, sq):
+                contacts += 1
+        return "tactical" if contacts > 4 else "positional"
+
+    # -------------------------------------------------- ordonnancement
+    def _ordered_moves(self, board):
+        moves = list(board.legal_moves)
+        aggressive_modes = ("aggressive", "chaotic", "tactician")
+
+        def key(m):
+            s = 0
+            if board.is_capture(m):
+                victim = board.piece_type_at(m.to_square)
+                attacker = board.piece_type_at(m.from_square)
+                s += 10 * PIECE_VALUE.get(victim, 0) - PIECE_VALUE.get(attacker, 0)
+            if self.mode in aggressive_modes:
+                board.push(m)
+                try:
+                    if board.is_check():
+                        s += 50
+                finally:
+                    board.pop()
+            return s
+
+        moves.sort(key=key, reverse=True)
+        return moves
+
+    # -------------------------------------------------- quiescence
+    def quiesce(self, board, alpha, beta, deadline):
+        self.nodes += 1
+        if self.nodes % 512 == 0 and time.monotonic() > deadline:
+            raise SearchTimeout
+        stand = self.evaluate(board)
+        if stand >= beta:
+            return beta
+        if stand > alpha:
+            alpha = stand
+        for m in self._ordered_moves(board):
+            if not board.is_capture(m):
+                continue
+            board.push(m)
+            try:
+                score = -self.quiesce(board, -beta, -alpha, deadline)
+            finally:
+                board.pop()
+            if score >= beta:
+                return beta
+            if score > alpha:
+                alpha = score
+        return alpha
+
+    # -------------------------------------------------- négamax
+    def negamax(self, board, depth, alpha, beta, ply, deadline):
+        self.nodes += 1
+        if self.nodes % 512 == 0 and time.monotonic() > deadline:
+            raise SearchTimeout
+        if board.is_checkmate():
+            return -MATE + ply
+        if board.is_stalemate() or board.is_insufficient_material():
+            return 0
+        if depth == 0:
+            return self.quiesce(board, alpha, beta, deadline)
+        best = -10 ** 9
+        for m in self._ordered_moves(board):
+            board.push(m)
+            try:
+                score = -self.negamax(board, depth - 1, -beta, -alpha,
+                                      ply + 1, deadline)
+            finally:
+                board.pop()
+            if score > best:
+                best = score
+            if score > alpha:
+                alpha = score
+            if alpha >= beta:
+                break
+        return best
+
+    # -------------------------------------------------- meilleur coup
+    def best_move(self, board, max_seconds):
+        deadline = time.monotonic() + max_seconds
+        self.nodes = 0
+        moves = self._ordered_moves(board)
+        if not moves:
+            return None
+
+        rng = random.Random(time.time_ns())
+        best_move = moves[0]
+        best_score = -10 ** 9
+        scores = {}
+        depth_done = 0
+        max_depth = 7
+
+        for depth in range(1, max_depth):
+            try:
+                alpha = -10 ** 9
+                local_best, local_score = None, -10 ** 9
+                scores = {}
+                for m in moves:
+                    board.push(m)
+                    try:
+                        s = -self.negamax(
+                            board, depth - 1, -10 ** 9,
+                            -alpha if alpha != -10 ** 9 else 10 ** 9,
+                            1, deadline)
+                    finally:
+                        board.pop()
+                    scores[m.uci()] = s
+                    if s > local_score:
+                        local_score, local_best = s, m
+                    if s > alpha:
+                        alpha = s
+                if local_best is not None:
+                    best_move, best_score = local_best, local_score
+                    depth_done = depth
+                    cands = {u for u, sc in scores.items() if sc >= best_score - 12}
+                    if cands:
+                        moves = [m for m in moves if m.uci() in cands]
+            except SearchTimeout:
+                break
+
+        if depth_done == 0:
+            return moves[0]
+
+        # Variation selon le mode
+        if best_score < 90000 and scores:
+            thresholds = {
+                "aggressive": 8, "defensive": 4, "chaotic": 45,
+                "balanced": 12, "tactician": 6, "strategist": 10,
+                "polyvalent": 12,
+            }
+            threshold = thresholds.get(self.mode, 12)
+            good = [m for m in moves
+                    if scores.get(m.uci(), -10 ** 9) >= best_score - threshold]
+            if good:
+                best_move = rng.choice(good)
+
+        return best_move
+
+
+class EngineThread(QThread):
+    moveReady = Signal(str, int)
+
+    def __init__(self, board_copy, seconds, game_id, mode, profile):
+        super().__init__()
+        self.board = board_copy
+        self.seconds = seconds
+        self.game_id = game_id
+        self.engine = Engine(mode=mode, profile=profile)
+
+    def run(self):
+        mv = self.engine.best_move(self.board, self.seconds)
+        self.move_uci = mv.uci() if mv is not None else "0000"
+        self.moveReady.emit(self.move_uci, self.game_id)
+
+
+# ===========================================================================
+#  WIDGET ÉCHIQUIER
+# ===========================================================================
+
+GLYPH = {
+    chess.WHITE: {chess.KING: "♔", chess.QUEEN: "♕", chess.ROOK: "♖",
+                  chess.BISHOP: "♗", chess.KNIGHT: "♘", chess.PAWN: "♙"},
+    chess.BLACK: {chess.KING: "♚", chess.QUEEN: "♛", chess.ROOK: "♜",
+                  chess.BISHOP: "♝", chess.KNIGHT: "♞", chess.PAWN: "♟"},
+}
+
+_FONT_CACHE = {}
+
+
+def _font(family, size):
+    key = (family, int(size))
+    if key not in _FONT_CACHE:
+        _FONT_CACHE[key] = QFont(family, int(size))
+    return _FONT_CACHE[key]
+
+
+class BoardWidget(QWidget):
+    squareClicked = Signal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumSize(360, 360)
+        self.theme = THEMES["clair"]
+        self.board = chess.Board()
+        self.orientation = chess.WHITE
+        self.selected = None
+        self.targets = set()
+        self.last_move = None
+        self.show_legal = True
+
+    def sizeHint(self):
+        return QSize(640, 640)
+
+    def square_rect(self, square):
+        size = min(self.width(), self.height())
+        side = size / 8.0
+        rank = chess.square_rank(square)
+        file = chess.square_file(square)
+        if self.orientation == chess.WHITE:
+            col, row = file, 7 - rank
+        else:
+            col, row = 7 - file, rank
+        ox = (self.width() - size) / 2.0
+        oy = (self.height() - size) / 2.0
+        return QRectF(ox + col * side, oy + row * side, side, side)
+
+    def square_at(self, pos):
+        size = min(self.width(), self.height())
+        ox = (self.width() - size) / 2.0
+        oy = (self.height() - size) / 2.0
+        x, y = pos.x() - ox, pos.y() - oy
+        if x < 0 or y < 0 or x >= size or y >= size:
+            return None
+        col = int(x * 8 // size)
+        row = int(y * 8 // size)
+        if self.orientation == chess.WHITE:
+            file, rank = col, 7 - row
+        else:
+            file, rank = 7 - col, row
+        return chess.square(file, rank)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        t = self.theme
+        p.fillRect(self.rect(), QColor(t["window_bg"]))
+
+        for sq in chess.SQUARES:
+            r = self.square_rect(sq)
+            light = (chess.square_rank(sq) + chess.square_file(sq)) % 2 == 1
+            p.fillRect(r, QColor(t["sq_light"] if light else t["sq_dark"]))
+
+        if self.last_move is not None:
+            p.fillRect(self.square_rect(self.last_move.from_square),
+                       QColor(t["last_move"]))
+            p.fillRect(self.square_rect(self.last_move.to_square),
+                       QColor(t["last_move"]))
+        if self.selected is not None:
+            p.fillRect(self.square_rect(self.selected), QColor(t["highlight"]))
+        if self.board.is_check():
+            ksq = self.board.king(self.board.turn)
+            if ksq is not None:
+                p.fillRect(self.square_rect(ksq), QColor(t["check"]))
+
+        if self.show_legal:
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(t["dot"]))
+            for sq in self.targets:
+                r = self.square_rect(sq)
+                p.drawEllipse(r.center(), r.width() * 0.13, r.width() * 0.13)
+
+        self._draw_coordinates(p)
+        self._draw_pieces(p)
+        p.end()
+
+    def _draw_coordinates(self, p):
+        t = self.theme
+        size = min(self.width(), self.height())
+        side = size / 8.0
+        p.setFont(_font("Segoe UI", max(7, side * 0.20)))
+        edge_file = 0 if self.orientation == chess.WHITE else 7
+        edge_rank = 0 if self.orientation == chess.WHITE else 7
+        h_flags = Qt.AlignBottom | (Qt.AlignLeft if self.orientation == chess.WHITE
+                                    else Qt.AlignRight)
+        v_flags = Qt.AlignTop | (Qt.AlignLeft if self.orientation == chess.WHITE
+                                 else Qt.AlignRight)
+        for i in range(8):
+            rank = (7 - i) if self.orientation == chess.WHITE else i
+            rsq = chess.square(edge_file, rank)
+            light = (chess.square_rank(rsq) + chess.square_file(rsq)) % 2 == 1
+            p.setPen(QColor(t["sq_dark"] if light else t["sq_light"]))
+            r = self.square_rect(rsq)
+            p.drawText(r.adjusted(side * 0.04, 0, -side * 0.04, -side * 0.02),
+                       h_flags, str(rank + 1))
+            file = i if self.orientation == chess.WHITE else 7 - i
+            fsq = chess.square(file, edge_rank)
+            light = (chess.square_rank(fsq) + chess.square_file(fsq)) % 2 == 1
+            p.setPen(QColor(t["sq_dark"] if light else t["sq_light"]))
+            r = self.square_rect(fsq)
+            p.drawText(r.adjusted(side * 0.04, side * 0.02, -side * 0.04, 0),
+                       v_flags, chr(ord("a") + file))
+
+    def _draw_pieces(self, p):
+        t = self.theme
+        for sq, pc in self.board.piece_map().items():
+            r = self.square_rect(sq)
+            font = _font("Segoe UI Symbol", r.width() * 0.72)
+            fm = QFontMetrics(font)
+            glyph = GLYPH[pc.color][pc.piece_type]
+            x = r.x() + (r.width() - fm.horizontalAdvance(glyph)) / 2.0
+            y = r.y() + (r.height() - fm.height()) / 2.0 + fm.ascent()
+            path = QPainterPath()
+            path.addText(x, y, font, glyph)
+            p.setPen(QPen(
+                QColor(t["white_ol"] if pc.color == chess.WHITE else t["black_ol"]),
+                max(1.2, r.width() * 0.055)))
+            p.setBrush(QColor(t["white_pc"] if pc.color == chess.WHITE
+                              else t["black_pc"]))
+            p.drawPath(path)
+
+    def mousePressEvent(self, event):
+        sq = self.square_at(event.position())
+        if sq is not None:
+            self.squareClicked.emit(sq)
+
+
+# ===========================================================================
+#  PAGE MENU PRINCIPAL
+# ===========================================================================
+
+class MainMenuPage(QWidget):
+    playRequested = Signal()
+    profileRequested = Signal()
+    optionsRequested = Signal()
+    lichessRequested = Signal()
+    quitRequested = Signal()
+
+    def __init__(self, theme):
+        super().__init__()
+        self.theme_key = theme
+        self._build()
+
+    def _build(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(60, 60, 60, 60)
+        layout.setSpacing(18)
+        layout.setAlignment(Qt.AlignCenter)
+
+        title = QLabel("DARKCHESS")
+        title.setObjectName("menuTitle")
+        title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title)
+
+        sub = QLabel(f"v{APP_VERSION} — Jeu d'échecs Qt")
+        sub.setObjectName("menuSub")
+        sub.setAlignment(Qt.AlignCenter)
+        layout.addWidget(sub)
+
+        layout.addSpacing(30)
+
+        self.btn_play = self._make_button("▶   Jouer")
+        self.btn_profile = self._make_button("🤖   Profil de l'IA")
+        self.btn_options = self._make_button("⚙   Options")
+        self.btn_lichess = self._make_button("♟   Ouvrir Lichess.org")
+        self.btn_quit = self._make_button("✕   Quitter")
+
+        for b in (self.btn_play, self.btn_profile, self.btn_options,
+                  self.btn_lichess, self.btn_quit):
+            layout.addWidget(b)
+
+        self.btn_play.clicked.connect(self.playRequested.emit)
+        self.btn_profile.clicked.connect(self.profileRequested.emit)
+        self.btn_options.clicked.connect(self.optionsRequested.emit)
+        self.btn_lichess.clicked.connect(self.lichessRequested.emit)
+        self.btn_quit.clicked.connect(self.quitRequested.emit)
+
+    def _make_button(self, text):
+        b = QPushButton(text)
+        b.setObjectName("menuBtn")
+        b.setMinimumHeight(54)
+        b.setCursor(Qt.PointingHandCursor)
+        return b
+
+    def apply_theme(self, t):
+        self.theme_key = t["_key"]
+        self.setStyleSheet(f"""
+            QWidget {{ background: {t['window_bg']}; }}
+            QLabel#menuTitle {{
+                color: {t['text']};
+                font-size: 46px;
+                font-weight: 900;
+                letter-spacing: 8px;
+                font-family: 'Segoe UI';
+            }}
+            QLabel#menuSub {{
+                color: {t['muted']};
+                font-size: 13px;
+                font-family: 'Segoe UI';
+            }}
+            QPushButton#menuBtn {{
+                background: {t['panel_bg']};
+                color: {t['text']};
+                border: 1px solid {t['panel_brd']};
+                border-radius: 12px;
+                font-size: 16px;
+                font-family: 'Segoe UI';
+                padding: 10px 20px;
+                text-align: center;
+            }}
+            QPushButton#menuBtn:hover {{
+                background: {t['accent']};
+                color: {t['accent_txt']};
+                border-color: {t['accent']};
+            }}
+            QPushButton#menuBtn:pressed {{
+                background: {t['accent']};
+                color: {t['accent_txt']};
+            }}
+        """)
+
+
+# ===========================================================================
+#  DIALOG PROFIL IA
+# ===========================================================================
+
+class ProfileDialog(QDialog):
+    def __init__(self, profile, parent=None):
+        super().__init__(parent)
+        self.profile = json.loads(json.dumps(profile))  # deep copy
+        self.setWindowTitle("Profil de l'IA")
+        self.setMinimumWidth(480)
+        self._build()
+
+    def _build(self):
+        root = QVBoxLayout(self)
+        root.setSpacing(12)
+
+        # Identité
+        form1 = QFormLayout()
+        self.ed_name = QLineEdit(self.profile.get("name", "Aurora"))
+        form1.addRow("Nom :", self.ed_name)
+
+        self.cb_mode = QComboBox()
+        for key, label in AI_MODES.items():
+            self.cb_mode.addItem(label, key)
+        idx = self.cb_mode.findData(self.profile.get("ai_mode", "balanced"))
+        if idx >= 0:
+            self.cb_mode.setCurrentIndex(idx)
+        form1.addRow("Type par défaut :", self.cb_mode)
+
+        self.chk_memory = QCheckBox("Activer la mémoire active")
+        self.chk_memory.setChecked(self.profile.get("memory_enabled", True))
+        form1.addRow("", self.chk_memory)
+        root.addLayout(form1)
+
+        # Niveau / XP
+        lvl_frame = QFrame()
+        lvl_frame.setObjectName("card")
+        lf = QVBoxLayout(lvl_frame)
+        lf.setContentsMargins(12, 10, 12, 10)
+
+        self.lbl_lvl = QLabel()
+        self.lbl_lvl.setObjectName("lvlLabel")
+        lf.addWidget(self.lbl_lvl)
+
+        self.xp_bar = QProgressBar()
+        self.xp_bar.setRange(0, 100)
+        lf.addWidget(self.xp_bar)
+
+        root.addWidget(lvl_frame)
+
+        # Caractéristiques (sliders)
+        char_frame = QFrame()
+        char_frame.setObjectName("card")
+        cf = QGridLayout(char_frame)
+        cf.setContentsMargins(12, 10, 12, 10)
+
+        self.sliders = {}
+        labels_fr = {
+            "aggression": "Agressivité",
+            "defense": "Défense",
+            "tactics": "Tactique",
+            "position": "Position",
+            "adaptability": "Adaptabilité",
+        }
+        for i, (key, label) in enumerate(labels_fr.items()):
+            cf.addWidget(QLabel(label), i, 0)
+            s = QSlider(Qt.Horizontal)
+            s.setRange(0, 100)
+            s.setValue(self.profile["characteristics"].get(key, 50))
+            cf.addWidget(s, i, 1)
+            val_lbl = QLabel(str(s.value()))
+            val_lbl.setFixedWidth(30)
+            cf.addWidget(val_lbl, i, 2)
+            s.valueChanged.connect(lambda v, l=val_lbl: l.setText(str(v)))
+            self.sliders[key] = s
+
+        root.addWidget(char_frame)
+
+        # Stats
+        stats = self.profile["stats"]
+        stats_txt = (
+            f"<b>Parties :</b> {stats.get('games', 0)} — "
+            f"<b>Victoires :</b> {stats.get('wins', 0)} — "
+            f"<b>Défaites :</b> {stats.get('losses', 0)} — "
+            f"<b>Nulles :</b> {stats.get('draws', 0)}"
+        )
+        lbl_stats = QLabel(stats_txt)
+        lbl_stats.setObjectName("statsLabel")
+        root.addWidget(lbl_stats)
+
+        # Boutons
+        btns = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        root.addWidget(btns)
+
+        self._update_level_label()
+
+    def _update_level_label(self):
+        lvl = self.profile.get("level", 1)
+        xp = self.profile.get("xp", 0)
+        in_lvl = xp % 100
+        self.lbl_lvl.setText(f"<b>Niveau {lvl}</b> — {xp} XP ({in_lvl}/100)")
+        self.xp_bar.setValue(in_lvl)
+
+    def get_profile(self):
+        self.profile["name"] = self.ed_name.text().strip() or "Aurora"
+        self.profile["ai_mode"] = self.cb_mode.currentData()
+        self.profile["memory_enabled"] = self.chk_memory.isChecked()
+        for key, slider in self.sliders.items():
+            self.profile["characteristics"][key] = slider.value()
+        return self.profile
+
+
+# ===========================================================================
+#  DIALOG OPTIONS
+# ===========================================================================
+
+class OptionsDialog(QDialog):
+    def __init__(self, theme_key, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Options")
+        self.setMinimumWidth(360)
+        self._build(theme_key)
+
+    def _build(self, theme_key):
+        lay = QVBoxLayout(self)
+
+        form = QFormLayout()
+        self.cb_theme = QComboBox()
+        self.cb_theme.addItem("Clair", "clair")
+        self.cb_theme.addItem("Sombre", "sombre")
+        self.cb_theme.addItem("Enfer", "enfer")
+        idx = self.cb_theme.findData(theme_key)
+        if idx >= 0:
+            self.cb_theme.setCurrentIndex(idx)
+        form.addRow("Thème :", self.cb_theme)
+        lay.addLayout(form)
+
+        info = QLabel(
+            "Options avancées disponibles via le menu en cours de partie.\n"
+            f"Plateforme d'analyse : <a href='{LICHESS_URL}'>{LICHESS_URL}</a>"
+        )
+        info.setOpenExternalLinks(True)
+        info.setWordWrap(True)
+        info.setObjectName("mutedLabel")
+        lay.addWidget(info)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        lay.addWidget(btns)
+
+    def selected_theme(self):
+        return self.cb_theme.currentData()
+
+
+# ===========================================================================
+#  PAGE DE JEU
+# ===========================================================================
+
+RESULT_TEXT = {
+    chess.Termination.CHECKMATE: "Échec et mat !",
+    chess.Termination.STALEMATE: "Pat — partie nulle",
+    chess.Termination.INSUFFICIENT_MATERIAL: "Matériel insuffisant — nulle",
+    chess.Termination.SEVENTYFIVE_MOVES: "Règle des 75 coups — nulle",
+    chess.Termination.FIVEFOLD_REPETITION: "Répétition quintuple — nulle",
+    chess.Termination.FIFTY_MOVES: "Règle des 50 coups — nulle",
+    chess.Termination.THREEFOLD_REPETITION: "Triple répétition — nulle",
+}
+
+
+class GamePage(QWidget):
+    backToMenu = Signal()
+    themeChangeRequested = Signal(str)
+    statsUpdated = Signal(dict)   # profile dict
+
+    START_SECONDS = 5 * 60.0
+
+    def __init__(self, theme_key, profile):
+        super().__init__()
+        self.theme_key = theme_key
+        self.profile = profile
+        self.ai_mode = profile.get("ai_mode", "balanced")
+        self.game_id = 0
+        self.engine_thinking = False
+        self.mode = "pvp"
+        self.human_color = chess.WHITE
+        self.game_active = False
+        self.board = chess.Board()
+        self.clocks = {chess.WHITE: self.START_SECONDS,
+                       chess.BLACK: self.START_SECONDS}
+        self.move_texts = []
+        self.move_uci_list = []
+        self.selected = None
+        self.targets = []
+        self._last_running = {chess.WHITE: None, chess.BLACK: None}
+        self._build_ui()
+
+    # ------------------------------------------------------------------ UI
+    def _build_ui(self):
+        root = QHBoxLayout(self)
+        root.setContentsMargins(14, 14, 14, 14)
+        root.setSpacing(14)
+
+        self.board_widget = BoardWidget()
+        self.board_widget.theme = THEMES[self.theme_key]
+        root.addWidget(self.board_widget, 1)
+        self.board_widget.squareClicked.connect(self.on_square_clicked)
+
+        panel = QFrame()
+        panel.setObjectName("panel")
+        panel.setFixedWidth(280)
+        lay = QVBoxLayout(panel)
+        lay.setContentsMargins(14, 14, 14, 14)
+        lay.setSpacing(10)
+
+        top_bar = QHBoxLayout()
+        self.btn_back = QPushButton("← Menu")
+        self.btn_back.setObjectName("smallBtn")
+        self.btn_back.clicked.connect(self.backToMenu.emit)
+        top_bar.addWidget(self.btn_back)
+
+        self.btn_profile_view = QPushButton("🤖 Profil")
+        self.btn_profile_view.setObjectName("smallBtn")
+        self.btn_profile_view.clicked.connect(self._show_profile_quick)
+        top_bar.addWidget(self.btn_profile_view)
+        lay.addLayout(top_bar)
+
+        title_black = QLabel("NOIRS")
+        title_black.setObjectName("sideTitle")
+        title_black.setAlignment(Qt.AlignCenter)
+        lay.addWidget(title_black)
+
+        self.clock_black = QLabel("--:--")
+        self.clock_black.setAlignment(Qt.AlignCenter)
+        self.clock_black.setFixedHeight(60)
+        lay.addWidget(self.clock_black)
+
+        self.move_list = QListWidget()
+        lay.addWidget(self.move_list, 1)
+
+        self.clock_white = QLabel("--:--")
+        self.clock_white.setAlignment(Qt.AlignCenter)
+        self.clock_white.setFixedHeight(60)
+        lay.addWidget(self.clock_white)
+
+        title_white = QLabel("BLANCS")
+        title_white.setObjectName("sideTitle")
+        title_white.setAlignment(Qt.AlignCenter)
+        lay.addWidget(title_white)
+
+        self.status_label = QLabel("")
+        self.status_label.setWordWrap(True)
+        lay.addWidget(self.status_label)
+
+        root.addWidget(panel)
+
+        self.clock_labels = {chess.BLACK: self.clock_black,
+                             chess.WHITE: self.clock_white}
+
+        self.timer = QTimer(self)
+        self.timer.setInterval(100)
+        self.timer.timeout.connect(self.on_tick)
+        self.timer.start()
+
+    def _show_profile_quick(self):
+        dlg = ProfileDialog(self.profile, self)
+        if dlg.exec() == QDialog.Accepted:
+            self.profile = dlg.get_profile()
+            self.ai_mode = self.profile.get("ai_mode", self.ai_mode)
+            AIProfile.save(self.profile)
+            self.statsUpdated.emit(self.profile)
+
+    # -------------------------------------------------------------- thème
+    def apply_theme(self, key):
+        self.theme_key = key
+        t = THEMES[key]
+        t2 = dict(t)
+        t2["_key"] = key
+        self.board_widget.theme = t
+        self.board_widget.update()
+        self.setStyleSheet(f"""
+            QFrame#panel {{ background: {t['panel_bg']};
+                            border: 1px solid {t['panel_brd']};
+                            border-radius: 12px; }}
+            QLabel {{ color: {t['text']}; font-family: 'Segoe UI'; }}
+            QLabel#sideTitle {{ color: {t['muted']}; font-weight: 600;
+                                letter-spacing: 3px; font-size: 11px; }}
+            QListWidget {{ background: {t['window_bg']}; color: {t['text']};
+                           border: 1px solid {t['panel_brd']};
+                           border-radius: 8px;
+                           font-family: 'Consolas', 'Segoe UI'; font-size: 13px;
+                           padding: 4px; }}
+            QListWidget::item {{ padding: 3px 8px; }}
+            QListWidget::item:selected {{ background: {t['accent']};
+                                          color: {t['accent_txt']}; }}
+            QPushButton#smallBtn {{
+                background: {t['panel_bg']};
+                color: {t['text']};
+                border: 1px solid {t['panel_brd']};
+                border-radius: 8px;
+                padding: 6px 10px;
+                font-size: 12px;
+            }}
+            QPushButton#smallBtn:hover {{
+                background: {t['accent']};
+                color: {t['accent_txt']};
+            }}
+        """)
+        self.refresh_clocks(force=True)
+        self.refresh_status()
+
+    # ----------------------------------------------------------- nouvelle
+    def start_game(self, mode, human_color=chess.WHITE):
+        self.game_id += 1
+        self.mode = mode
+        self.human_color = human_color
+        self.board = chess.Board()
+        self.clocks = {chess.WHITE: self.START_SECONDS,
+                       chess.BLACK: self.START_SECONDS}
+        self.move_texts = []
+        self.move_uci_list = []
+        self.move_list.clear()
+        self.selected = None
+        self.targets = []
+        self.engine_thinking = False
+        self.game_active = True
+        self.board_widget.board = self.board
+        self.board_widget.selected = None
+        self.board_widget.targets = set()
+        self.board_widget.last_move = None
+        self.board_widget.orientation = (
+            human_color if mode == "pvai" else chess.WHITE)
+        self.board_widget.update()
+        titles = {"pvp": "Humain vs Humain",
+                  "pvai": "Humain vs IA",
+                  "simu": "Simulation IA vs IA (Blitz 5+0)"}
+        self.status(f"Partie — {titles[mode]}. "
+                    f"IA : {AI_MODES.get(self.ai_mode, self.ai_mode)}")
+        self.refresh_clocks(force=True)
+        self.refresh_status()
+        if mode in ("pvai", "simu"):
+            if mode == "simu" or self.board.turn != self.human_color:
+                QTimer.singleShot(300, self.maybe_engine_turn)
+
+    # ------------------------------------------------------------ horloges
+    def fmt_clock(self, seconds):
+        seconds = max(0.0, seconds)
+        return f"{int(seconds // 60):02d}:{int(seconds % 60):02d}"
+
+    def refresh_clocks(self, force=False):
+        t = THEMES[self.theme_key]
+        for color, lbl in self.clock_labels.items():
+            lbl.setText(self.fmt_clock(self.clocks[color]))
+            running = (self.game_active and self.board.turn == color
+                       and not self.board.is_game_over())
+            if force or self._last_running[color] != running:
+                self._last_running[color] = running
+                bg = t["clock_run"] if running else t["clock_idle"]
+                fg = t["accent_txt"] if running else t["text"]
+                lbl.setStyleSheet(
+                    f"background:{bg}; color:{fg}; border-radius:10px;"
+                    f" font-size:28px; font-weight:700;"
+                    f" font-family:'Consolas';")
+
+    def on_tick(self):
+        if self.game_active and not self.board.is_game_over():
+            side = self.board.turn
+            self.clocks[side] -= 0.1
+            if self.clocks[side] <= 0:
+                self.clocks[side] = 0.0
+                self.game_active = False
+                winner = "Noirs" if side == chess.WHITE else "Blancs"
+                self.refresh_clocks(force=True)
+                self.refresh_status(f"⏱ Temps écoulé — Victoire des {winner}.")
+                self._post_game_update("0-1" if side == chess.WHITE else "1-0",
+                                       time_expired=True)
+                QMessageBox.information(
+                    self, "Temps écoulé",
+                    f"Les {'blancs' if side == chess.WHITE else 'noirs'} ont "
+                    f"dépassé le temps.\nVictoire des {winner} !")
+                return
+            self.refresh_clocks()
+
+    # --------------------------------------------------------------- jeu
+    def status(self, text):
+        self.status_label.setText(text)
+
+    def refresh_status(self, override=None):
+        if override is not None:
+            self.status(override)
+            return
+        if not self.game_active or self.board.is_game_over():
+            return
+        side = "Blancs" if self.board.turn == chess.WHITE else "Noirs"
+        txt = f"Trait aux {side}"
+        if self.board.is_check():
+            txt += "  •  Échec !"
+        if self.engine_thinking:
+            txt += "  •  IA réfléchit…"
+        self.status(txt)
+
+    def refresh_move_list(self):
+        self.move_list.clear()
+        for i in range(0, len(self.move_texts), 2):
+            white = self.move_texts[i]
+            black = self.move_texts[i + 1] if i + 1 < len(self.move_texts) else ""
+            self.move_list.addItem(f"{i // 2 + 1:>3}.  {white:<10} {black}")
+        self.move_list.scrollToBottom()
+
+    def on_square_clicked(self, sq):
+        if not self.game_active or self.engine_thinking:
+            return
+        if self.board.is_game_over():
+            return
+        if self.mode == "pvai" and self.board.turn != self.human_color:
+            return
+
+        pc = self.board.piece_at(sq)
+        if self.selected is None:
+            if pc is not None and pc.color == self.board.turn:
+                self.select(sq)
+            return
+        if sq == self.selected:
+            self.clear_selection()
+            return
+
+        moves = [m for m in self.board.legal_moves
+                 if m.from_square == self.selected and m.to_square == sq]
+        if moves:
+            mv = moves[0]
+            if any(m.promotion for m in moves):
+                choice, ok = QInputDialog.getItem(
+                    self, "Promotion", "Choisissez la pièce :",
+                    ["Dame", "Tour", "Fou", "Cavalier"], 0, False)
+                if not ok:
+                    self.clear_selection()
+                    return
+                letter = {"Dame": chess.QUEEN, "Tour": chess.ROOK,
+                          "Fou": chess.BISHOP,
+                          "Cavalier": chess.KNIGHT}[choice]
+                mv = chess.Move(self.selected, sq, promotion=letter)
+            self.clear_selection()
+            self.play_move(mv)
+        elif pc is not None and pc.color == self.board.turn:
+            self.select(sq)
+        else:
+            self.clear_selection()
+
+    def select(self, sq):
+        targets = [m.to_square for m in self.board.legal_moves
+                   if m.from_square == sq]
+        if not targets:
+            self.clear_selection()
+            return
+        self.selected = sq
+        self.targets = targets
+        self.board_widget.selected = sq
+        self.board_widget.targets = set(targets)
+        self.board_widget.update()
+
+    def clear_selection(self):
+        self.selected = None
+        self.targets = []
+        self.board_widget.selected = None
+        self.board_widget.targets = set()
+        self.board_widget.update()
+
+    def play_move(self, move):
+        san = self.board.san(move)
+        uci = move.uci()
+        self.board.push(move)
+        self.move_texts.append(san)
+        self.move_uci_list.append(uci)
+        self.refresh_move_list()
+        self.board_widget.board = self.board
+        self.board_widget.last_move = move
+        self.board_widget.update()
+        if self.check_game_end():
+            return
+        self.refresh_status()
+        self.maybe_engine_turn()
+
+    def check_game_end(self):
+        if not self.board.is_game_over():
+            return False
+        self.game_active = False
+        outcome = self.board.outcome()
+        text = RESULT_TEXT.get(outcome.termination, "Partie terminée")
+        self.refresh_status(f"Partie terminée — {text} ({self.board.result()})")
+        self.refresh_clocks(force=True)
+        self._post_game_update(self.board.result())
+        self.show_end_dialog(text)
+        return True
+
+    # --------------------------------------------------- post-game logique
+    def _post_game_update(self, result, time_expired=False):
+        """Met à jour le profil IA et déclenche l'analyse auto si IA vs IA."""
+        if self.mode == "simu":
+            ai_color = chess.WHITE  # convention
+            AIProfile.update_after_game(
+                self.profile, result, self.move_uci_list, ai_color)
+            self.statsUpdated.emit(self.profile)
+            # Analyse automatique pour IA vs IA
+            QTimer.singleShot(400, self.show_feedback)
+
+    def show_end_dialog(self, result_text):
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Information)
+        box.setWindowTitle("Fin de partie")
+        box.setText(f"{result_text}\n\nRésultat : {self.board.result()}")
+
+        if self.mode != "simu":
+            box.setInformativeText("Analyse ou export ?")
+            btn_feedback = box.addButton("Voir l'analyse", QMessageBox.ActionRole)
+            btn_pgn = box.addButton("Enregistrer PGN", QMessageBox.ActionRole)
+            box.addButton("Fermer", QMessageBox.RejectRole)
+            box.exec()
+            if box.clickedButton() == btn_feedback:
+                self.show_feedback()
+            elif box.clickedButton() == btn_pgn:
+                self.save_pgn()
+        else:
+            box.setInformativeText("Partie IA vs IA — analyse automatique en cours…")
+            box.addButton("OK", QMessageBox.AcceptRole)
+            box.exec()
+
+    # ------------------------------------------------------------ feedback
+    def show_feedback(self):
+        if not self.move_texts:
+            return
+        total = len(self.move_texts)
+        captures = sum(1 for m in self.move_texts if "x" in m)
+        checks = sum(1 for m in self.move_texts if "+" in m or "#" in m)
+        result = self.board.result()
+
+        if self.mode == "pvp":
+            winner = {"1-0": "Blancs", "0-1": "Noirs",
+                      "1/2-1/2": "Match nul"}.get(result, "—")
+        elif self.mode == "simu":
+            winner = {"1-0": "Aurora (Blancs)", "0-1": "Aurora (Noirs)",
+                      "1/2-1/2": "Match nul"}.get(result, "—")
+        else:
+            human_won = ((result == "1-0" and self.human_color == chess.WHITE)
+                         or (result == "0-1" and self.human_color == chess.BLACK))
+            winner = "Vous" if human_won else "Aurora"
+
+        lvl = self.profile.get("level", 1)
+        xp = self.profile.get("xp", 0)
+        stats = self.profile.get("stats", {})
+
+        html = f"""
+        <h3>Analyse de la partie</h3>
+        <table cellspacing='4'>
+        <tr><td><b>Coups joués :</b></td><td>{total}</td></tr>
+        <tr><td><b>Captures :</b></td><td>{captures}</td></tr>
+        <tr><td><b>Échecs donnés :</b></td><td>{checks}</td></tr>
+        <tr><td><b>Résultat :</b></td><td>{result}</td></tr>
+        <tr><td><b>Vainqueur :</b></td><td>{winner}</td></tr>
+        <tr><td><b>Mode IA :</b></td>
+            <td>{AI_MODES.get(self.ai_mode, '—')}</td></tr>
+        </table>
+        <h4>Profil Aurora</h4>
+        <p>Niveau <b>{lvl}</b> — {xp} XP<br>
+        {stats.get('games', 0)} parties : {stats.get('wins', 0)} V /
+        {stats.get('losses', 0)} D / {stats.get('draws', 0)} N</p>
+        """
+        QMessageBox.information(self, "Feedback", html)
+
+    # ------------------------------------------------------------ PGN
+    def player_name(self, color):
+        if self.mode == "pvp":
+            return "Blancs" if color == chess.WHITE else "Noirs"
+        if self.mode == "simu":
+            return f"Aurora ({'Blancs' if color == chess.WHITE else 'Noirs'})"
+        if color == self.human_color:
+            return "Humain"
+        return f"Aurora ({AI_MODES.get(self.ai_mode, '—')})"
+
+    def save_pgn(self):
+        name = f"darkchess_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.pgn"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Enregistrer la partie", name, "Fichiers PGN (*.pgn)")
+        if not path:
+            return
+        game = chess.pgn.Game()
+        game.headers["Event"] = "Darkchess"
+        game.headers["Site"] = "Local"
+        game.headers["Date"] = datetime.date.today().strftime("%Y.%m.%d")
+        game.headers["White"] = self.player_name(chess.WHITE)
+        game.headers["Black"] = self.player_name(chess.BLACK)
+        game.headers["Result"] = self.board.result()
+        game.headers["Annotator"] = f"Darkchess {APP_VERSION}"
+
+        node = game
+        board = chess.Board()
+        for san in self.move_texts:
+            try:
+                move = board.parse_san(san)
+            except ValueError:
+                break
+            node = node.add_main_variation(move)
+            board.push(move)
+
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                print(game, file=f, end="\n\n")
+            QMessageBox.information(
+                self, "PGN enregistré",
+                f"Fichier sauvegardé :\n{path}\n\n"
+                f"Importable sur lichess.org (Mes études → Importer).")
+        except OSError as e:
+            QMessageBox.warning(self, "Erreur",
+                                f"Impossible d'enregistrer :\n{e}")
+
+    # ------------------------------------------------------------------ IA
+    def compute_ai_think_time(self, board):
+        """Temps de réflexion humanisé pour blitz 5+0."""
+        remaining = self.clocks[board.turn]
+        if remaining <= 5:
+            return max(0.3, remaining * 0.15)
+
+        move_num = board.fullmove_number
+        pieces = len(board.piece_map())
+
+        if move_num <= 8:
+            fraction = 0.015          # ouverture : rapide
+        elif pieces > 16:
+            fraction = 0.035          # milieu complexe
+        elif pieces > 10:
+            fraction = 0.040          # transition
+        else:
+            fraction = 0.030          # finale
+
+        base = remaining * fraction
+        base *= random.uniform(0.6, 1.4)      # variation humaine
+        base = min(base, remaining * 0.12)    # garder du buffer
+        return max(0.3, base)
+
+    def maybe_engine_turn(self):
+        if not self.game_active or self.board.is_game_over():
+            return
+        if self.engine_thinking:
+            return
+        if self.mode == "pvp":
+            return
+        if self.mode == "pvai" and self.board.turn == self.human_color:
+            return
+        self.engine_thinking = True
+        self.refresh_status()
+        gid = self.game_id
+        think = self.compute_ai_think_time(self.board)
+        self.thread = EngineThread(
+            self.board.copy(), think, gid, self.ai_mode, self.profile)
+        self.thread.moveReady.connect(self.on_engine_move)
+        self.thread.start()
+
+    def on_engine_move(self, uci, gid):
+        if gid != self.game_id:
+            return
+        self.engine_thinking = False
+        if not self.game_active:
+            return
+        if uci == "0000":
+            self.check_game_end()
+            return
+        QTimer.singleShot(150, lambda: self._apply_engine_move(uci, gid))
+
+    def _apply_engine_move(self, uci, gid):
+        if gid != self.game_id or not self.game_active:
+            return
+        try:
+            mv = chess.Move.from_uci(uci)
+        except ValueError:
+            return
+        if mv in self.board.legal_moves:
+            self.play_move(mv)
+
+
+# ===========================================================================
+#  FENÊTRE PRINCIPALE
+# ===========================================================================
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle(APP_TITLE)
+        self.resize(1040, 740)
+        self.profile = AIProfile.load()
+        self.theme_key = "clair"
+
+        self.stack = QStackedWidget()
+        self.setCentralWidget(self.stack)
+
+        self.menu_page = MainMenuPage(self.theme_key)
+        self.game_page = GamePage(self.theme_key, self.profile)
+
+        self.stack.addWidget(self.menu_page)
+        self.stack.addWidget(self.game_page)
+
+        self.menu_page.playRequested.connect(self.go_to_game)
+        self.menu_page.profileRequested.connect(self.show_profile)
+        self.menu_page.optionsRequested.connect(self.show_options)
+        self.menu_page.lichessRequested.connect(self.open_lichess)
+        self.menu_page.quitRequested.connect(self.close)
+
+        self.game_page.backToMenu.connect(self.go_to_menu)
+        self.game_page.statsUpdated.connect(self.on_stats_updated)
+
+        self._build_menus()
+        self.apply_theme("clair")
+        self.stack.setCurrentWidget(self.menu_page)
+
+    def _add_menu_action(self, menu, text, handler, shortcut=None,
+                         checkable=False, checked=False, action_group=None):
+        act = QAction(text, self)
+        if shortcut:
+            act.setShortcut(shortcut)
+        act.setCheckable(checkable)
+        act.setChecked(checked)
+        if action_group is not None:
+            action_group.addAction(act)
+        act.triggered.connect(lambda *_, h=handler: h())
+        menu.addAction(act)
+        return act
+
+    def _build_menus(self):
+        bar = self.menuBar()
+
+        m_partie = bar.addMenu("&Partie")
+        self._add_menu_action(m_partie, "Humain vs &Humain",
+                              lambda: self.go_to_game("pvp"), "Ctrl+N")
+        self._add_menu_action(m_partie, "Humain vs IA — &Blancs",
+                              lambda: self.go_to_game("pvai", chess.WHITE), "Ctrl+1")
+        self._add_menu_action(m_partie, "Humain vs IA — &Noirs",
+                              lambda: self.go_to_game("pvai", chess.BLACK), "Ctrl+2")
+        self._add_menu_action(m_partie, "&Simulation IA vs IA",
+                              lambda: self.go_to_game("simu"), "Ctrl+S")
+        m_partie.addSeparator()
+        self._add_menu_action(m_partie, "← &Menu principal",
+                              self.go_to_menu, "Escape")
+        self._add_menu_action(m_partie, "&Quitter", self.close, "Ctrl+Q")
+
+        m_ia = bar.addMenu("&IA")
+        grp_ia = QActionGroup(self)
+        grp_ia.setExclusive(True)
+        for key in ("balanced", "aggressive", "defensive", "chaotic",
+                    "tactician", "strategist", "polyvalent"):
+            act = self._add_menu_action(
+                m_ia, AI_MODES[key],
+                lambda k=key: self.set_ai_mode(k),
+                checkable=True, checked=(key == self.profile.get("ai_mode")),
+                action_group=grp_ia)
+            if key == self.profile.get("ai_mode"):
+                self.act_ai_current = act
+
+        m_aff = bar.addMenu("&Affichage")
+        grp_th = QActionGroup(self)
+        grp_th.setExclusive(True)
+        self.act_light = self._add_menu_action(
+            m_aff, "Thème &clair", lambda: self.apply_theme("clair"),
+            checkable=True, checked=True, action_group=grp_th)
+        self.act_dark = self._add_menu_action(
+            m_aff, "Thème &sombre", lambda: self.apply_theme("sombre"),
+            checkable=True, action_group=grp_th)
+        self.act_hell = self._add_menu_action(
+            m_aff, "Thème &enfer", lambda: self.apply_theme("enfer"),
+            checkable=True, action_group=grp_th)
+        m_aff.addSeparator()
+        self._add_menu_action(m_aff, "&Retourner l'échiquier",
+                              self.flip_board, "Ctrl+F")
+        self._add_menu_action(m_aff, "Afficher les coups &légaux",
+                              self.toggle_legal, checkable=True, checked=True)
+
+        m_outils = bar.addMenu("&Outils")
+        self._add_menu_action(m_outils, "🤖 Profil de l'IA…",
+                              self.show_profile, "Ctrl+P")
+        self._add_menu_action(m_outils, "♟ Ouvrir Lichess.org",
+                              self.open_lichess, "Ctrl+L")
+        self._add_menu_action(m_outils, "⚙ Options…", self.show_options, "Ctrl+O")
+
+        m_aide = bar.addMenu("&Aide")
+        self._add_menu_action(m_aide, "À &propos", self.show_about, "F1")
+
+    # ------------------------------------------------------ navigation
+    def go_to_game(self, mode="pvp", human_color=chess.WHITE):
+        self.game_page.start_game(mode, human_color)
+        self.stack.setCurrentWidget(self.game_page)
+
+    def go_to_menu(self):
+        self.game_page.game_active = False
+        self.stack.setCurrentWidget(self.menu_page)
+
+    def set_ai_mode(self, mode):
+        self.profile["ai_mode"] = mode
+        self.game_page.ai_mode = mode
+        AIProfile.save(self.profile)
+
+    def on_stats_updated(self, profile):
+        self.profile = profile
+
+    # ----------------------------------------------------------- thèmes
+    def apply_theme(self, key):
+        self.theme_key = key
+        t = dict(THEMES[key])
+        t["_key"] = key
+
+        self.menu_page.apply_theme(t)
+        self.game_page.apply_theme(key)
+
+        self.act_light.setChecked(key == "clair")
+        self.act_dark.setChecked(key == "sombre")
+        self.act_hell.setChecked(key == "enfer")
+
+        self.setStyleSheet(f"""
+            QMainWindow {{ background: {t['window_bg']}; }}
+            QMenuBar {{ background: {t['panel_bg']}; color: {t['text']};
+                       border-bottom: 1px solid {t['panel_brd']}; }}
+            QMenuBar::item {{ padding: 6px 12px; background: transparent; }}
+            QMenuBar::item:selected {{ background: {t['accent']};
+                                       color: {t['accent_txt']};
+                                       border-radius: 4px; }}
+            QMenu {{ background: {t['panel_bg']}; color: {t['text']};
+                     border: 1px solid {t['panel_brd']}; }}
+            QMenu::item {{ padding: 7px 28px; }}
+            QMenu::item:selected {{ background: {t['accent']};
+                                    color: {t['accent_txt']}; }}
+            QDialog {{ background: {t['panel_bg']}; color: {t['text']}; }}
+            QDialog QLabel {{ color: {t['text']}; }}
+            QDialog QLineEdit, QDialog QComboBox, QDialog QSpinBox {{
+                background: {t['window_bg']};
+                color: {t['text']};
+                border: 1px solid {t['panel_brd']};
+                border-radius: 6px;
+                padding: 5px 8px;
+            }}
+            QDialog QTextEdit {{
+                background: {t['window_bg']};
+                color: {t['text']};
+                border: 1px solid {t['panel_brd']};
+                border-radius: 6px;
+            }}
+            QDialog QFrame#card {{
+                background: {t['window_bg']};
+                border: 1px solid {t['panel_brd']};
+                border-radius: 10px;
+            }}
+            QDialog QLabel#lvlLabel {{
+                color: {t['text']};
+                font-size: 15px;
+                font-weight: 600;
+            }}
+            QDialog QLabel#statsLabel {{
+                color: {t['muted']};
+                font-size: 12px;
+            }}
+            QDialog QLabel#mutedLabel {{
+                color: {t['muted']};
+                font-size: 11px;
+            }}
+            QPushButton {{
+                background: {t['panel_bg']};
+                color: {t['text']};
+                border: 1px solid {t['panel_brd']};
+                border-radius: 8px;
+                padding: 7px 14px;
+            }}
+            QPushButton:hover {{
+                background: {t['accent']};
+                color: {t['accent_txt']};
+            }}
+            QProgressBar {{
+                border: 1px solid {t['panel_brd']};
+                border-radius: 6px;
+                background: {t['window_bg']};
+                text-align: center;
+                color: {t['text']};
+                height: 18px;
+            }}
+            QProgressBar::chunk {{
+                background: {t['accent']};
+                border-radius: 5px;
+            }}
+            QSlider::groove:horizontal {{
+                height: 6px;
+                background: {t['panel_brd']};
+                border-radius: 3px;
+            }}
+            QSlider::handle:horizontal {{
+                background: {t['accent']};
+                width: 16px;
+                margin: -6px 0;
+                border-radius: 8px;
+            }}
+            QMessageBox, QInputDialog {{
+                background: {t['panel_bg']};
+                color: {t['text']};
+            }}
+        """)
+
+    def flip_board(self):
+        self.game_page.board_widget.orientation ^= True
+        self.game_page.board_widget.update()
+
+    def toggle_legal(self, checked):
+        self.game_page.board_widget.show_legal = checked
+        self.game_page.board_widget.update()
+
+    # --------------------------------------------------------- dialogues
+    def show_profile(self):
+        dlg = ProfileDialog(self.profile, self)
+        if dlg.exec() == QDialog.Accepted:
+            self.profile = dlg.get_profile()
+            self.game_page.profile = self.profile
+            self.game_page.ai_mode = self.profile.get("ai_mode", "balanced")
+            AIProfile.save(self.profile)
+
+    def show_options(self):
+        dlg = OptionsDialog(self.theme_key, self)
+        if dlg.exec() == QDialog.Accepted:
+            self.apply_theme(dlg.selected_theme())
+
+    def open_lichess(self):
+        webbrowser.open(LICHESS_URL)
+
+    def show_about(self):
+        QMessageBox.about(
+            self, "À propos",
+            f"<h3>{APP_TITLE} {APP_VERSION}</h3>"
+            "<p>Jeu d'échecs Qt (PySide6) &amp; python-chess.</p>"
+            "<ul>"
+            "<li>Menu principal, 3 thèmes (Clair / Sombre / Enfer)</li>"
+            "<li>IA Aurora : 7 modes — Agressif, Défensif, Équilibré, "
+            "Chaotique, Tacticien, Stratège, Polyvalent</li>"
+            "<li>Profil persistant avec mémoire active, XP et niveau</li>"
+            "<li>Export PGN compatible lichess.org</li>"
+            "</ul>"
+            "<p>Raccourcis : Ctrl+N / 1 / 2 / S, Ctrl+P (profil), "
+            "Ctrl+O (options), Ctrl+L (lichess), Ctrl+F (retourner), "
+            "Esc (menu), Ctrl+Q (quitter).</p>")
+
+
+def main():
+    app = QApplication(sys.argv)
+    app.setApplicationName(APP_TITLE)
+    app.setStyle("Fusion")
+    win = MainWindow()
+    win.show()
+    sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()
